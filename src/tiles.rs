@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use egui::{pos2, Color32, Context, Mesh, Rect, Vec2};
 use egui_extras::RetainedImage;
-use reqwest::header::USER_AGENT;
+use reqwest_wasm::header::USER_AGENT;
 
 use crate::mercator::TileId;
 
@@ -43,7 +43,7 @@ type Source = Box<dyn Fn(TileId) -> String + Send>;
 /// Downloads and keeps cache of the tiles. It must persist between frames.
 pub struct Tiles {
     cache: HashMap<TileId, Option<Tile>>,
-    client: reqwest::blocking::Client,
+    client: reqwest_wasm::blocking::Client,
     egui_ctx: Context,
     source: Source,
 }
@@ -55,7 +55,7 @@ impl Tiles {
     {
         Self {
             cache: Default::default(),
-            client: reqwest::blocking::Client::new(),
+            client: reqwest_wasm::blocking::Client::new(),
             egui_ctx: egui_ctx,
             source: Box::new(source),
         }
@@ -89,13 +89,13 @@ impl Tiles {
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(transparent)]
-    Http(reqwest::Error),
+    Http(reqwest_wasm::Error),
 
     #[error("error while decoding the image: {0}")]
     Image(String),
 }
 
-fn download_single(client: &reqwest::blocking::Client, url: &str) -> Result<Tile, Error> {
+fn download_single(client: &reqwest_wasm::blocking::Client, url: &str) -> Result<Tile, Error> {
     let image = client
         .get(url)
         .header(USER_AGENT, "Walkers")
