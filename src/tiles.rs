@@ -87,7 +87,7 @@ impl Tiles {
                 }
 
                 spawn_local(async move {
-                    download_single(&cl, &url, tile_id, tx).await.unwrap();
+                    download_single(&cl, &url, tile_id, tx).await;
                 });
                 None
             }
