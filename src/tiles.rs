@@ -4,10 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 use egui::{pos2, Color32, Context, Mesh, Rect, Vec2};
 use egui_extras::RetainedImage;
 use reqwest::header::USER_AGENT;
-use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::mercator::TileId;
-use crate::tokio::TokioRuntimeThread;
 
 #[derive(Clone)]
 pub struct Tile {
@@ -40,18 +38,14 @@ impl Tile {
     }
 }
 
+type Source = Box<dyn Fn(TileId) -> String + Send>;
+
 /// Downloads and keeps cache of the tiles. It must persist between frames.
 pub struct Tiles {
     cache: HashMap<TileId, Option<Tile>>,
-
-    /// Tiles to be downloaded by the IO thread.
-    request_tx: tokio::sync::mpsc::Sender<TileId>,
-
-    /// Tiles that got downloaded and should be put in the cache.
-    tile_rx: tokio::sync::mpsc::Receiver<(TileId, Tile)>,
-
-    #[allow(dead_code)] // Significant Drop
-    tokio_runtime_thread: TokioRuntimeThread,
+    client: reqwest::blocking::Client,
+    egui_ctx: Context,
+    source: Source,
 }
 
 impl Tiles {
@@ -59,45 +53,32 @@ impl Tiles {
     where
         S: Fn(TileId) -> String + Send + 'static,
     {
-        let tokio_runtime_thread = TokioRuntimeThread::new();
-
-        // Minimum value which didn't cause any stalls while testing.
-        let channel_size = 20;
-
-        let (request_tx, request_rx) = tokio::sync::mpsc::channel(channel_size);
-        let (tile_tx, tile_rx) = tokio::sync::mpsc::channel(channel_size);
-        tokio_runtime_thread
-            .runtime
-            .spawn(download(source, request_rx, tile_tx, egui_ctx));
         Self {
             cache: Default::default(),
-            request_tx,
-            tile_rx,
-            tokio_runtime_thread,
+            client: reqwest::blocking::Client::new(),
+            egui_ctx: egui_ctx,
+            source: Box::new(source),
         }
     }
 
     /// Return a tile if already in cache, schedule a download otherwise.
     pub fn at(&mut self, tile_id: TileId) -> Option<Tile> {
-        // Just take one at the time.
-        match self.tile_rx.try_recv() {
-            Ok((tile_id, tile)) => {
-                self.cache.insert(tile_id, Some(tile));
-            }
-            Err(TryRecvError::Empty) => {
-                // Just ignore. It means that no new tile was downloaded.
-            }
-            Err(TryRecvError::Disconnected) => panic!("IO thread is dead"),
-        }
-
         match self.cache.entry(tile_id) {
             Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                if let Ok(()) = self.request_tx.try_send(tile_id) {
-                    log::debug!("Requested tile: {:?}", tile_id);
-                    entry.insert(None);
-                } else {
-                    log::debug!("Request queue is full.");
+            Entry::Vacant(_entry) => {
+                let url = (self.source)(tile_id);
+
+                match download_single(&self.client, &url) {
+                    Ok(tile) => {
+                        // add it to the cache
+                        self.cache.insert(tile_id, Some(tile));
+
+                        // update the gui with new state
+                        self.egui_ctx.request_repaint();
+                    }
+                    Err(e) => {
+                        log::warn!("Could not download '{}': {}", &url, e);
+                    }
                 }
                 None
             }
@@ -114,12 +95,11 @@ enum Error {
     Image(String),
 }
 
-async fn download_single(client: &reqwest::Client, url: &str) -> Result<Tile, Error> {
+fn download_single(client: &reqwest::blocking::Client, url: &str) -> Result<Tile, Error> {
     let image = client
         .get(url)
         .header(USER_AGENT, "Walkers")
         .send()
-        .await
         .map_err(Error::Http)?;
 
     log::debug!("Downloaded {:?}.", image.status());
@@ -128,40 +108,9 @@ async fn download_single(client: &reqwest::Client, url: &str) -> Result<Tile, Er
         .error_for_status()
         .map_err(Error::Http)?
         .bytes()
-        .await
         .map_err(Error::Http)?;
 
     Tile::from_image_bytes(&image).map_err(Error::Image)
-}
-
-async fn download<S>(
-    source: S,
-    mut request_rx: tokio::sync::mpsc::Receiver<TileId>,
-    tile_tx: tokio::sync::mpsc::Sender<(TileId, Tile)>,
-    egui_ctx: Context,
-) -> Result<(), ()>
-where
-    S: Fn(TileId) -> String + Send + 'static,
-{
-    // Keep outside the loop to reuse it as much as possible.
-    let client = reqwest::Client::new();
-
-    loop {
-        let request = request_rx.recv().await.ok_or(())?;
-        let url = source(request);
-
-        log::debug!("Getting {:?} from {}.", request, url);
-
-        match download_single(&client, &url).await {
-            Ok(tile) => {
-                tile_tx.send((request, tile)).await.map_err(|_| ())?;
-                egui_ctx.request_repaint();
-            }
-            Err(e) => {
-                log::warn!("Could not download '{}': {}", &url, e);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

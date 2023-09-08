@@ -5,7 +5,6 @@ mod map;
 mod mercator;
 pub mod providers;
 mod tiles;
-mod tokio;
 mod zoom;
 
 pub use map::{Center, Map, MapMemory, Projector};
