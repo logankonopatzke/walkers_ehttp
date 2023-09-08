@@ -7,6 +7,8 @@ use reqwest::header::USER_AGENT;
 
 use crate::mercator::TileId;
 
+use wasm_bindgen_futures::futures_0_3::spawn_local;
+
 #[derive(Clone)]
 pub struct Tile {
     image: Arc<RetainedImage>,
@@ -67,26 +69,12 @@ impl Tiles {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(_entry) => {
                 let url = (self.source)(tile_id);
+                let cl = self.client.clone();
 
-                #[cfg(target_arch = "wasm32")]
-                let r = wasm_bindgen_futures::spawn_local(async move {
-                    match download_single(&self.client, &url).await {
-                        Ok(tile) => {
-                            // add it to the cache
-                            self.cache.insert(tile_id, Some(tile));
+                let (tx, rx) = std::sync::mpsc::channel::<(TileId, Tile)>();
 
-                            // update the gui with new state
-                            self.egui_ctx.request_repaint();
-                        }
-                        Err(e) => {
-                            log::warn!("Could not download '{}': {}", &url, e);
-                        }
-                    }
-                });
-
-                #[cfg(not(target_arch = "wasm32"))]
-                match download_single(&self.client, &url) {
-                    Ok(tile) => {
+                match rx.try_recv() {
+                    Ok((tile_id, tile)) => {
                         // add it to the cache
                         self.cache.insert(tile_id, Some(tile));
 
@@ -97,6 +85,10 @@ impl Tiles {
                         log::warn!("Could not download '{}': {}", &url, e);
                     }
                 }
+
+                spawn_local(async move {
+                    download_single(&cl, &url, tile_id, tx).await.unwrap();
+                });
                 None
             }
         }
@@ -112,7 +104,12 @@ enum Error {
     Image(String),
 }
 
-async fn download_single(client: &reqwest::Client, url: &str) -> Result<Tile, Error> {
+async fn download_single(
+    client: &reqwest::Client,
+    url: &str,
+    tile_id: TileId,
+    tx: std::sync::mpsc::Sender<(TileId, Tile)>,
+) -> Result<(), Error> {
     let image = client
         .get(url)
         .header(USER_AGENT, "Walkers")
@@ -129,7 +126,11 @@ async fn download_single(client: &reqwest::Client, url: &str) -> Result<Tile, Er
         .await
         .map_err(Error::Http)?;
 
-    Tile::from_image_bytes(&image).map_err(Error::Image)
+    let res = Tile::from_image_bytes(&image).map_err(Error::Image)?;
+
+    tx.send((tile_id, res)).unwrap();
+
+    Ok(())
 }
 
 #[cfg(test)]
