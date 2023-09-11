@@ -1,4 +1,5 @@
 use std::collections::hash_map::Entry;
+use std::sync::mpsc::Receiver;
 use std::{collections::HashMap, sync::Arc};
 
 use egui::{pos2, Color32, Context, Mesh, Rect, Vec2};
@@ -44,6 +45,8 @@ pub struct Tiles {
     cache: HashMap<TileId, Option<Tile>>,
     egui_ctx: Context,
     source: Source,
+    tx: std::sync::mpsc::Sender<(TileId, Tile)>,
+    rx: std::sync::mpsc::Receiver<(TileId, Tile)>,
 }
 
 impl Tiles {
@@ -51,10 +54,14 @@ impl Tiles {
     where
         S: Fn(TileId) -> String + Send + 'static,
     {
+        let (tx, rx) = std::sync::mpsc::channel::<(TileId, Tile)>();
+
         Self {
             cache: Default::default(),
             egui_ctx: egui_ctx,
             source: Box::new(source),
+            tx,
+            rx,
         }
     }
 
@@ -65,11 +72,9 @@ impl Tiles {
             Entry::Vacant(_entry) => {
                 let url = (self.source)(tile_id);
 
-                let (tx, rx) = std::sync::mpsc::channel::<(TileId, Tile)>();
+                download_single(&url, tile_id, self.tx.clone()).unwrap();
 
-                download_single(&url, tile_id, tx).unwrap();
-
-                match rx.try_recv() {
+                match self.rx.try_recv() {
                     Ok((tile_id, tile)) => {
                         // add it to the cache
                         self.cache.insert(tile_id, Some(tile));
