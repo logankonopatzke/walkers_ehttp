@@ -1,5 +1,4 @@
 use std::collections::hash_map::Entry;
-use std::sync::mpsc::Receiver;
 use std::{collections::HashMap, sync::Arc};
 
 use egui::{pos2, Color32, Context, Mesh, Rect, Vec2};
@@ -108,7 +107,6 @@ fn download_single(
 
     ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
         let result = result.unwrap();
-        println!("tile received with code: {:?}", result.status);
 
         let image = result.bytes;
         let res = Tile::from_image_bytes(&image)
