@@ -87,7 +87,8 @@ impl Tiles {
                 }
 
                 spawn_local(async move {
-                    download_single(&cl, &url, tile_id, tx).await;
+                    let _ = download_single(&cl, &url, tile_id, tx).await;
+                    log::info!("retrieved tiles");
                 });
                 None
             }
