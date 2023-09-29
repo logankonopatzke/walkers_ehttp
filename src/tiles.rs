@@ -94,6 +94,9 @@ impl Tiles {
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
+    #[error("error in http request")]
+    Http(ehttp::Error),
+
     #[error("error while decoding the image: {0}")]
     Image(String),
 }
@@ -105,16 +108,21 @@ fn download_single(
 ) -> Result<(), Error> {
     let request = ehttp::Request::get(url);
 
-    ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
-        let result = result.unwrap();
-
-        let image = result.bytes;
-        let res = Tile::from_image_bytes(&image)
-            .map_err(Error::Image)
-            .unwrap();
-
-        tx.send((tile_id, res)).unwrap();
-    });
+    ehttp::fetch(
+        request,
+        move |result: ehttp::Result<ehttp::Response>| match result.map_err(Error::Http) {
+            Ok(result) => {
+                let image = result.bytes;
+                match Tile::from_image_bytes(&image).map_err(Error::Image) {
+                    Ok(res) => tx
+                        .send((tile_id, res))
+                        .expect("transmitter should be able to send image data"),
+                    Err(err) => println!("image conversion error: {}", err.to_string()),
+                }
+            }
+            Err(err) => println!("fetch result error: {}", err.to_string()),
+        },
+    );
 
     Ok(())
 }
