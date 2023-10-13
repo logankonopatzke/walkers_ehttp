@@ -73,17 +73,12 @@ impl Tiles {
 
                 download_single(&url, tile_id, self.tx.clone()).unwrap();
 
-                match self.rx.try_recv() {
-                    Ok((tile_id, tile)) => {
-                        // add it to the cache
-                        self.cache.insert(tile_id, Some(tile));
+                if let Ok((tile_id, tile)) = self.rx.try_recv() {
+                    // add it to the cache
+                    self.cache.insert(tile_id, Some(tile));
 
-                        // update the gui with new state
-                        self.egui_ctx.request_repaint();
-                    }
-                    Err(e) => {
-                        log::warn!("Could not download '{}': {}", &url, e);
-                    }
+                    // update the gui with new state
+                    self.egui_ctx.request_repaint();
                 }
 
                 None
