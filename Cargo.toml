@@ -12,13 +12,13 @@ edition = "2021"
 [dependencies]
 thiserror = "1"
 log = "0.4"
-egui = "0.22"
-egui_extras = { version = "0.22", features = ["image"] }
+egui = "0.23"
+egui_extras = { version = "0.23", features = ["image"] }
 image = { version = "0.24", features = ["jpeg", "png"] }
 geo-types = { version = "0.7" }
 ehttp = "0.3.0"
 
 [dev-dependencies]
-eframe = "0.22"
+eframe = "0.23"
 env_logger = "0.10"
 approx = "0.5"
